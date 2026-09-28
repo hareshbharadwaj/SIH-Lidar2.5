@@ -1,0 +1,9 @@
+# Pinned to the versions this project was developed and benchmarked against.
+# Everything runs on CPU; no GPU or CUDA build is required.
+
+numpy>=1.24,<3
+scipy>=1.10
+pillow>=10
+torch>=2.0          # CPU wheel is fine:  pip install torch --index-url https://download.pytorch.org/whl/cpu
+numba>=0.57         # optional but strongly recommended: ~50x faster LiDAR ray tracing
+tqdm>=4.65

@@ -1,0 +1,724 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FoveaMap — Adaptive Variable-Resolution 2.5D Lidar Mapping</title>
+<style>
+:root{
+  --bg:#0a0d13; --panel:#111722; --panel2:#161e2b; --line:#243044;
+  --txt:#dbe4f0; --dim:#8497b0; --acc:#4cc2ff; --acc2:#7c5cff;
+  --good:#3ddc97; --warn:#ffb547; --bad:#ff5c7a;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);
+  font:13px/1.45 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  overflow:hidden}
+#app{display:grid;grid-template-columns:236px 1fr 340px;grid-template-rows:52px 1fr;
+  height:100vh;gap:1px;background:var(--line)}
+header{grid-column:1/4;background:var(--panel);display:flex;align-items:center;
+  gap:18px;padding:0 16px}
+.brand{font-weight:700;font-size:15px;letter-spacing:.2px}
+.brand span{color:var(--acc)}
+.kpis{display:flex;gap:8px;margin-left:auto;flex-wrap:nowrap;overflow:hidden}
+.kpi{background:var(--panel2);border:1px solid var(--line);border-radius:8px;
+  padding:4px 10px;min-width:78px}
+.kpi b{display:block;font-size:14px;line-height:1.2}
+.kpi i{font-style:normal;color:var(--dim);font-size:10px;text-transform:uppercase;
+  letter-spacing:.5px}
+aside{background:var(--panel);overflow-y:auto;padding:10px}
+aside::-webkit-scrollbar,.mm::-webkit-scrollbar{width:8px}
+aside::-webkit-scrollbar-thumb,.mm::-webkit-scrollbar-thumb{background:#243044;border-radius:4px}
+main{background:#070a10;position:relative;overflow:hidden;display:flex;
+  flex-direction:column}
+#stage{flex:1;position:relative;min-height:0}
+canvas{display:block;width:100%;height:100%;cursor:crosshair}
+.hud{position:absolute;left:10px;top:10px;pointer-events:none;
+  font:11px ui-monospace,SFMono-Regular,Menlo,monospace;color:#9fb3cc;
+  text-shadow:0 1px 3px #000}
+.hud b{color:var(--acc)}
+#tip{position:absolute;pointer-events:none;background:#0d1420ee;border:1px solid var(--line);
+  border-radius:6px;padding:6px 9px;font:11px ui-monospace,Menlo,monospace;
+  display:none;white-space:pre;z-index:9;box-shadow:0 8px 24px #000a}
+#timeline{border-top:1px solid var(--line);background:var(--panel);display:flex;
+  align-items:center;gap:10px;padding:7px 12px}
+button,select{background:var(--panel2);color:var(--txt);border:1px solid var(--line);
+  border-radius:6px;padding:5px 9px;font-size:12px;cursor:pointer;font-family:inherit}
+button:hover,select:hover{border-color:#3a4a66;background:#1b2634}
+button.on{background:var(--acc);color:#04121c;border-color:var(--acc);font-weight:600}
+.grp{margin-bottom:14px}
+.grp>h4{margin:0 0 6px;font-size:10px;letter-spacing:.9px;text-transform:uppercase;
+  color:var(--dim);font-weight:600}
+.seg{display:flex;flex-wrap:wrap;gap:4px}
+.seg button{flex:1 1 auto;padding:5px 6px;font-size:11px}
+.row{display:flex;align-items:center;gap:8px;margin:5px 0}
+.row label{flex:0 0 66px;color:var(--dim);font-size:11px}
+.row input[type=range]{flex:1;accent-color:var(--acc);min-width:0}
+.row output{flex:0 0 46px;text-align:right;font:11px ui-monospace,Menlo;color:var(--acc)}
+.leg{display:flex;flex-direction:column;gap:2px}
+.leg div{display:flex;align-items:center;gap:7px;padding:2px 4px;border-radius:4px;
+  cursor:pointer;font-size:11.5px}
+.leg div:hover{background:#1b2634}
+.leg div.off{opacity:.3}
+.leg s{width:11px;height:11px;border-radius:2px;display:block;flex:0 0 auto}
+.leg em{margin-left:auto;font-style:normal;color:var(--dim);font-size:10px;
+  font-family:ui-monospace,Menlo}
+.card{background:var(--panel2);border:1px solid var(--line);border-radius:9px;
+  padding:9px 10px;margin-bottom:11px}
+.card h5{margin:0 0 7px;font-size:11px;letter-spacing:.6px;text-transform:uppercase;
+  color:var(--dim);font-weight:600;display:flex;justify-content:space-between}
+.card h5 span{color:var(--acc);text-transform:none;letter-spacing:0}
+svg{display:block;width:100%;overflow:visible}
+.tiny{font-size:10.5px;color:var(--dim);line-height:1.4}
+.mono{font-family:ui-monospace,Menlo,monospace}
+#load{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  background:#070a10;color:var(--dim);z-index:20;font-size:13px}
+.note{color:var(--dim);font-size:10.5px;margin-top:6px;line-height:1.4}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="brand">◈ Fovea<span>Map</span></div>
+    <div class="tiny" id="subtitle">Adaptive variable-resolution 2.5D lidar mapping · synthetic dataset · CPU inference</div>
+    <div class="kpis" id="kpis"></div>
+  </header>
+
+  <aside id="left">
+    <div class="grp"><h4>Layer</h4><div class="seg" id="modeSeg"></div></div>
+    <div class="grp"><h4>Source</h4><div class="seg" id="srcSeg">
+      <button data-src="pred" class="on">Prediction</button>
+      <button data-src="gt">Ground truth</button>
+      <button data-src="diff">Difference</button>
+    </div></div>
+    <div class="grp"><h4>Grid</h4><div class="seg" id="gridSeg">
+      <button data-grid="adaptive" class="on">Adaptive foveated</button>
+      <button data-grid="uniform">Uniform 50 cm</button>
+    </div>
+    <div class="note" id="gridNote"></div></div>
+    <div class="grp"><h4>2.5D view</h4>
+      <div class="row"><label>Tilt</label><input type="range" id="tilt" min="0" max="72" value="0"><output id="tiltO">0°</output></div>
+      <div class="row"><label>Relief</label><input type="range" id="vs" min="0" max="300" value="100"><output id="vsO">1.0×</output></div>
+      <div class="row"><label>Zoom</label><input type="range" id="zoom" min="0" max="1000" value="492"><output id="zoomO">—</output></div>
+    </div>
+    <div class="grp"><h4>Overlays</h4>
+      <div class="seg">
+        <button id="bRings" class="on">Ring bounds</button>
+        <button id="bWire">Cell wire</button>
+      </div>
+      <div class="seg" style="margin-top:4px">
+        <button id="bShade" class="on">Hillshade</button>
+        <button id="bFollow" class="on">Lock ego</button>
+      </div>
+    </div>
+    <div class="grp"><h4>Classes (click to hide)</h4><div class="leg" id="legend"></div></div>
+  </aside>
+
+  <main>
+    <div id="stage">
+      <canvas id="map"></canvas>
+      <div class="hud" id="hud"></div>
+      <div id="tip"></div>
+      <div id="load">decoding map tiles…</div>
+    </div>
+    <div id="timeline">
+      <button id="play">▶</button>
+      <button id="prev">⏮</button>
+      <button id="next">⏭</button>
+      <input type="range" id="scrub" min="0" max="1" value="0" style="flex:1">
+      <span class="mono" id="finfo" style="min-width:150px;text-align:right"></span>
+      <select id="speed">
+        <option value="2">0.5×</option><option value="1" selected>1×</option>
+        <option value="0.5">2×</option><option value="0.25">4×</option>
+      </select>
+    </div>
+  </main>
+
+  <aside id="right">
+    <div class="card"><h5>Per-class IoU<span id="miouV"></span></div><div id="iouChart"></div></div>
+    <div class="card"><h5>Accuracy vs distance<span id="rangeNote"></span></div><div id="rangeChart"></div></div>
+    <div class="card"><h5>Resolution ablation</h5><div id="ablChart"></div>
+      <div class="note" id="ablNote"></div></div>
+    <div class="card"><h5>Latency budget<span id="fpsV"></span></div><div id="latChart"></div></div>
+    <div class="card"><h5>Memory footprint</h5><div id="memChart"></div>
+      <div class="note" id="memNote"></div></div>
+    <div class="card"><h5>Confusion matrix<span>rows = GT</span></h5><div id="cmChart"></div></div>
+    <div class="card"><h5>Task metrics</h5><div id="taskBox" class="mono" style="font-size:11px"></div></div>
+    <div class="card"><h5>Pipeline</h5><div id="pipeBox" class="tiny"></div></div>
+  </aside>
+</div>
+
+<script>
+/*__DASH_DATA__*/
+/* =======================================================================
+   FoveaMap interactive dashboard
+   ======================================================================= */
+const CL = DASH.classes, NC = CL.length, TILE = DASH.tile, RINGS = DASH.rings;
+const UNIF = DASH.uniform_cell, EXT = DASH.extent;
+const M = DASH.metrics || {};
+const CN = {}; CL.forEach((c,i)=>CN[c.name]=i);
+const DRIVE = {}; CL.forEach((c,i)=>DRIVE[i]=c.drivable);
+const GRP = {}; CL.forEach((c,i)=>GRP[i]=c.group);
+
+/* ---------- small utils ---------- */
+const hex2rgb = h => [parseInt(h.substr(1,2),16),parseInt(h.substr(3,2),16),parseInt(h.substr(5,2),16)];
+const ABGR = (r,g,b)=>(255<<24)|(b<<16)|(g<<8)|r;
+const clamp=(v,a,b)=>v<a?a:v>b?b:v;
+const fmtB = b => b>=1e9?(b/1e9).toFixed(1)+' GB':b>=1e6?(b/1e6).toFixed(1)+' MB':b>=1e3?(b/1e3).toFixed(0)+' KB':b+' B';
+
+function ramp(stops,t){
+  t=clamp(t,0,1); const n=stops.length-1; const x=t*n; const i=Math.min(n-1,Math.floor(x));
+  const f=x-i, a=stops[i], b=stops[i+1];
+  return [a[0]+(b[0]-a[0])*f, a[1]+(b[1]-a[1])*f, a[2]+(b[2]-a[2])*f];
+}
+const RAMP_ELEV=[[16,32,80],[24,90,150],[40,150,150],[70,170,90],[190,190,80],[170,120,60],[235,235,245]];
+const RAMP_VIR =[[68,1,84],[59,82,139],[33,145,140],[94,201,98],[253,231,37]];
+const RAMP_HEAT=[[10,14,24],[30,60,110],[60,150,180],[120,200,120],[250,210,80],[250,120,70]];
+const LUT_ELEV=new Uint32Array(256), LUT_VIR=new Uint32Array(256), LUT_HEAT=new Uint32Array(256);
+for(let i=0;i<256;i++){
+  let c=ramp(RAMP_ELEV,i/255); LUT_ELEV[i]=ABGR(c[0]|0,c[1]|0,c[2]|0);
+  c=ramp(RAMP_VIR,i/255);      LUT_VIR[i] =ABGR(c[0]|0,c[1]|0,c[2]|0);
+  c=ramp(RAMP_HEAT,i/255);     LUT_HEAT[i]=ABGR(c[0]|0,c[1]|0,c[2]|0);
+}
+const CLUT=new Uint32Array(256).fill(ABGR(60,66,78));
+CL.forEach((c,i)=>{const[r,g,b]=hex2rgb(c.color);CLUT[i]=ABGR(r,g,b);});
+
+/* ---------- state ---------- */
+const S={
+  busy:new Set(), mode:'semantic', src:'pred', grid:'adaptive', frame:0, playing:false,
+  speed:1, camX:0, camY:0, zoom:3.4, tilt:0, vs:1.0,
+  rings:true, wire:false, shade:true, follow:true, hidden:new Set(), dec:new Map() };
+const MODES=[['semantic','Semantic'],['elevation','Elevation'],['drivable','Drivability'],
+             ['confidence','Confidence'],['density','Return density'],['motion','Motion']];
+
+/* =======================================================================
+   tile decoding  (async, LRU cached)
+   ======================================================================= */
+const _cv=document.createElement('canvas'), _cx=_cv.getContext('2d',{willReadFrequently:true});
+function loadRGB(uri){
+  return new Promise((res,rej)=>{
+    const im=new Image(); im.onload=()=>{
+      _cv.width=im.width; _cv.height=im.height;
+      _cx.clearRect(0,0,im.width,im.height); _cx.drawImage(im,0,0);
+      res({w:im.width,h:im.height,d:_cx.getImageData(0,0,im.width,im.height).data});
+    }; im.onerror=rej; im.src=uri;
+  });
+}
+function buildShade(A,B,cell){
+  // zmax from B channels 0/1, hillshade from its gradient
+  const N=A.w*A.h, z=new Float32Array(N), sh=new Float32Array(N);
+  for(let p=0;p<N;p++){
+    const f=B.d[p*4], h=B.d[p*4+1];
+    z[p] = (f===255)?(h*0.25-1.0):(f*0.01-1.0);
+  }
+  const W=A.w,H=A.h, L=[0.45,0.45,0.77];
+  for(let j=0;j<H;j++)for(let i=0;i<W;i++){
+    const p=j*W+i;
+    if(A.d[p*4]===255){sh[p]=1;continue;}
+    const i0=Math.max(0,i-1),i1=Math.min(W-1,i+1),j0=Math.max(0,j-1),j1=Math.min(H-1,j+1);
+    const dx=(z[j*W+i1]-z[j*W+i0])/((i1-i0)*cell);
+    const dy=(z[j1*W+i]-z[j0*W+i])/((j1-j0)*cell);
+    const nx=-dx, ny=-dy, nz=1, inv=1/Math.sqrt(nx*nx+ny*ny+1);
+    const d=(nx*L[0]+ny*L[1]+nz*L[2])*inv;
+    sh[p]=clamp(0.35+0.85*d,0.25,1.5);
+  }
+  return {z,sh};
+}
+async function decodeFrame(i){
+  if(S.dec.has(i)) return S.dec.get(i);
+  const f=DASH.frames[i];
+  const tiles=S.grid==='adaptive'
+    ? f.rings.map((t,k)=>({t,rOut:RINGS[k].r_out,cell:RINGS[k].cell}))
+    : [{t:f.unif,rOut:EXT/2,cell:UNIF}];
+  const out=[];
+  for(const tt of tiles){
+    const [A,B,C]=await Promise.all([loadRGB(tt.t.a),loadRGB(tt.t.b),loadRGB(tt.t.c)]);
+    const hs=buildShade(A,B,tt.cell);
+    out.push({A,B,C,z:hs.z,sh:hs.sh,rOut:tt.rOut,cell:tt.cell});
+  }
+  // painter order: rows sorted far -> near
+  const rows=[];
+  out.forEach((tl,ti)=>{ for(let j=TILE-1;j>=0;j--)
+    rows.push({wx:(j+0.5)*tl.cell-tl.rOut, ti, j}); });
+  rows.sort((a,b)=>b.wx-a.wx);
+  const pack={tiles:out, rows, frame:f};
+  S.dec.set(i,pack);
+  return pack;
+  if(S.dec.size>6){ for(const k of S.dec.keys()){ if(k!==i){ S.dec.delete(k); break; } } }
+  return pack;
+}
+let CUR=null, NEED=0;
+async function setFrame(i,force){
+  i=clamp(i,0,DASH.frames.length-1);
+  if(i!==S.frame||force){ S.frame=i; NEED++; syncScrub(); }
+  const token=++NEED;
+  const p=await decodeFrame(S.frame);
+  if(token!==NEED) return;
+  CUR=p; draw(); updateHud();
+  prefetch(S.frame);
+}
+
+/* Warm the two frames ahead so playback never stalls on a PNG decode.
+   This must live here and NOT in decodeFrame: calling it from decodeFrame
+   makes every prefetch spawn two more, which walks the whole clip and then
+   loops forever, pegging the CPU. */
+function prefetch(i){
+  const N=DASH.frames.length;
+  for(let k=1;k<=2;k++){
+    const nx=(i+k)%N;
+    if(S.dec.has(nx)||S.busy.has(nx)) continue;
+    S.busy.add(nx);
+    const done=()=>S.busy.delete(nx);
+    try{ decodeFrame(nx).then(done,done); }catch(e){ done(); }
+  }
+}
+
+/* =======================================================================
+   rendering
+   ======================================================================= */
+const cv=document.getElementById('map'), ctx=cv.getContext('2d');
+let IMG=null, U32=null;
+function resize(){
+  const r=cv.parentElement.getBoundingClientRect(), d=Math.min(2,devicePixelRatio||1);
+  cv.width=Math.max(64,Math.round(r.width*d)); cv.height=Math.max(64,Math.round(r.height*d));
+  IMG=ctx.createImageData(cv.width,cv.height); U32=new Uint32Array(IMG.data.buffer);
+  draw();
+}
+function tilesFor(t){ return t.tiles; }
+function draw(){
+  if(!IMG) return;
+  const W=cv.width,H=cv.height;
+  U32.fill(ABGR(7,10,16));
+  if(CUR){
+    const cosT=Math.cos(S.tilt*Math.PI/180), sinT=Math.sin(S.tilt*Math.PI/180);
+    const z=S.zoom*(H/700);                    // px per metre (dpr aware)
+    const cx=W/2, cy=H/2;
+    const vs=S.vs*sinT*z;
+    const mode=S.mode;
+    for(const rw of CUR.rows){
+      const tl=CUR.tiles[rw.ti], j=rw.j;
+      const sy0=cy-(rw.wx-S.camX)*z*cosT;
+      if(sy0<-40||sy0>H+60) continue;
+      const cell=tl.cell, A=tl.A, B=tl.B, C=tl.C, sh=tl.sh, zz=tl.z;
+      const wcell=cell*z;
+      // adaptive stride: never draw cells smaller than ~1 px, and be a bit
+      // more conservative in the oblique view where tall cells also paint a
+      // vertical wall (keeps the worst-case frame under ~50 ms)
+      const minPx=(sinT>0.02)?1.25:0.85;
+      let step=1;
+      if(wcell<minPx) step=Math.ceil(minPx/wcell);
+      const wpx=Math.max(1,Math.round(wcell*step)), hpx=Math.max(1,Math.round(wcell*step*cosT));
+      for(let i=0;i<TILE;i+=step){
+        const p=j*TILE+i;
+        const cls=A.d[p*4];
+        if(cls===255||cls>=NC) continue;
+        const dlt=C.d[p*4+2], gt=(dlt===0?cls:dlt-1);
+        if(S.hidden.has(S.src==='gt'?gt:cls)) continue;
+        let col=0, draw=true;
+        const prob=A.d[p*4+1], cnt=A.d[p*4+2];
+        if(S.src==='gt'){ if(gt===255||gt>=NC) continue; col=CLUT[gt]; }
+        else if(S.src==='diff'){ if(gt===255||gt>=NC) continue;
+          col = (cls===gt)?ABGR(40,140,90):ABGR(220,60,90); }
+        else if(mode==='semantic'){ col=CLUT[cls]; }
+        else if(mode==='elevation'){
+          const t=clamp((zz[p]+1.0)/5.0,0,1); col=LUT_ELEV[(t*255)|0];
+        } else if(mode==='drivable'){
+          if(GRP[cls]==='terrain') col = DRIVE[cls]?ABGR(50,200,120):ABGR(120,124,140);
+          else if(GRP[cls]==='dynamic') col=ABGR(255,92,122);
+          else col=ABGR(190,120,60);
+        } else if(mode==='confidence'){ col=LUT_VIR[(prob/255*255)|0]; }
+        else if(mode==='density'){ col=LUT_HEAT[cnt]; }
+        else if(mode==='motion'){ const m=C.d[p*4+1]; if(m<12) continue; col=LUT_HEAT[m]; }
+        if(!draw) continue;
+        if(mode!=='confidence'&&mode!=='density'&&mode!=='motion'&&S.shade){
+          const s=sh[p];
+          const r=(col&255)*s, g=((col>>8)&255)*s, b=((col>>16)&255)*s;
+          col=ABGR(r>255?255:r|0,g>255?255:g|0,b>255?255:b|0);
+        }
+        const wy=(i+0.5)*tl.cell-tl.rOut;
+        const wx=rw.wx;
+        const r=Math.sqrt(wx*wx+wy*wy);
+        if(r>tl.rOut+0.001||r<RINGS[rw.ti].r_in-0.001){ if(S.grid==='adaptive') continue; }
+        const sx=cx-(wy-S.camY)*z;
+        if(sx<-wpx||sx>W+wpx) continue;
+        const lift=zz[p]*vs;
+        const yc=sy0-lift;
+        const x0=(sx-wpx/2)|0;
+        if(vs>0.4&&Math.abs(lift)>0.6){
+          const yA=Math.min(yc+hpx/2,sy0+hpx/2), yB=Math.max(yc+hpx/2,sy0+hpx/2);
+          const dr=(col&255)*0.42, dg=((col>>8)&255)*0.42, db=((col>>16)&255)*0.42;
+          box(x0,(yA|0),wpx,Math.max(1,(yB-yA)|0),ABGR(dr|0,dg|0,db|0));
+        }
+        box(x0,((yc-hpx/2)|0),wpx,hpx,col);
+      }
+    }
+  }
+  ctx.putImageData(IMG,0,0);
+  overlay();
+}
+function box(x,y,w,h,c){
+  const W=cv.width,H=cv.height;
+  let x0=x<0?0:x, y0=y<0?0:y, x1=x+w>W?W:x+w, y1=y+h>H?H:y+h;
+  if(x0>=x1||y0>=y1) return;
+  for(let yy=y0;yy<y1;yy++){ const o=yy*W; U32.fill(c,o+x0,o+x1); }
+}
+const RCOL=['#4cc2ff','#7c5cff','#3ddc97','#ffb547','#ff5c7a'];
+function overlay(){
+  const W=cv.width,H=cv.height, d=Math.min(2,devicePixelRatio||1);
+  const z=S.zoom*(H/700)/d;
+  const cosT=Math.max(Math.cos(S.tilt*Math.PI/180),0.05);
+  ctx.save(); ctx.scale(d,d);
+  const w2=W/d, h2=H/d, c2x=w2/2, c2y=h2/2;
+  const ox=c2x+S.camY*z, oy=c2y+S.camX*z*cosT;      // world origin on screen
+
+  if(S.wire){
+    let k=RINGS.length-1; for(let q=0;q<RINGS.length;q++){ if(RINGS[q].cell*z>=7){k=q;break;} }
+    const cs=RINGS[k].cell*z;
+    ctx.strokeStyle='rgba(255,255,255,.09)'; ctx.lineWidth=1; ctx.beginPath();
+    for(let x=ox%cs; x<w2; x+=cs){ ctx.moveTo(x,0); ctx.lineTo(x,h2); }
+    for(let y=oy%(cs*cosT); y<h2; y+=cs*cosT){ ctx.moveTo(0,y); ctx.lineTo(w2,y); }
+    ctx.stroke();
+  }
+  if(S.rings){
+    ctx.lineWidth=1; ctx.setLineDash([5,6]);
+    RINGS.forEach((rg,k)=>{
+      ctx.strokeStyle=RCOL[k]+'66';
+      ctx.beginPath(); ctx.ellipse(ox,oy,rg.r_out*z,rg.r_out*z*cosT,0,0,6.2832); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle=RCOL[k]+'cc'; ctx.font='10px ui-monospace,Menlo';
+      ctx.fillText(rg.r_out+' m · '+(rg.cell*100).toFixed(0)+'cm', ox+5, oy-rg.r_out*z*cosT-4);
+      ctx.setLineDash([5,6]);
+    });
+    ctx.setLineDash([]);
+  }
+  // ego carrier
+  ctx.fillStyle='#4cc2ff'; ctx.strokeStyle='#04121c'; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.moveTo(ox,oy-8); ctx.lineTo(ox-5.5,oy+5); ctx.lineTo(ox,oy+2);
+  ctx.lineTo(ox+5.5,oy+5); ctx.closePath(); ctx.fill(); ctx.stroke();
+  // scale bar
+  const raw=90/z, nice=[1,2,5,10,20,50,100,200].reduce((a,b)=>Math.abs(b-raw)<Math.abs(a-raw)?b:a);
+  const px=nice*z;
+  ctx.strokeStyle='#9fb3cc'; ctx.fillStyle='#9fb3cc'; ctx.lineWidth=1.4;
+  ctx.beginPath(); ctx.moveTo(14,h2-15); ctx.lineTo(14+px,h2-15);
+  ctx.moveTo(14,h2-19); ctx.lineTo(14,h2-11); ctx.moveTo(14+px,h2-19); ctx.lineTo(14+px,h2-11);
+  ctx.stroke(); ctx.font='11px ui-monospace,Menlo'; ctx.fillText(nice+' m',14,h2-23);
+  ctx.restore();
+}
+
+/* =======================================================================
+   interaction
+   ======================================================================= */
+const stage=document.getElementById('stage'), tip=document.getElementById('tip');
+function screen2world(mx,my){
+  const W=cv.width,H=cv.height,d=Math.min(2,devicePixelRatio||1);
+  const z=S.zoom*(H/700), cosT=Math.cos(S.tilt*Math.PI/180);
+  const sx=mx*d, sy=my*d;
+  const wy=S.camY-(sx-W/2)/z;
+  const wx=S.camX-(sy-H/2)/(z*cosT);
+  return [wx,wy];
+}
+let drag=null;
+stage.addEventListener('mousedown',e=>{drag={x:e.clientX,y:e.clientY,cx:S.camX,cy:S.camY};});
+addEventListener('mouseup',()=>drag=null);
+stage.addEventListener('mousemove',e=>{
+  const r=cv.getBoundingClientRect(), mx=e.clientX-r.left, my=e.clientY-r.top;
+  if(drag){
+    const W=cv.width,H=cv.height,d=Math.min(2,devicePixelRatio||1);
+    const z=S.zoom*(H/700), cosT=Math.cos(S.tilt*Math.PI/180);
+    S.camX=drag.cx+(e.clientY-drag.y)*d/(z*Math.max(cosT,0.2));
+    S.camY=drag.cy-(e.clientX-drag.x)*d/z;
+    if(S.camX*S.camX+S.camY*S.camY>1) S.follow=false, S.camX*=1, document.getElementById('bFollow').classList.remove('on');
+    syncFollow(); draw(); return;
+  }
+  // hover
+  const [wx,wy]=screen2world(mx,my);
+  const r2=Math.hypot(wx,wy);
+  let tl=null,ti=-1;
+  if(CUR){
+    if(S.grid==='adaptive'){
+      for(let k=0;k<RINGS.length;k++) if(r2>=RINGS[k].r_in&&r2<RINGS[k].r_out){tl=CUR.tiles[k];ti=k;break;}
+    } else tl=CUR.tiles[0], ti=0;
+  }
+  if(!tl||r2>(S.grid==='adaptive'?RINGS[ti].r_out:EXT/2)){tip.style.display='none';return;}
+  const i=clamp(Math.floor((wy+tl.rOut)/tl.cell),0,TILE-1);
+  const j=clamp(Math.floor((wx+tl.rOut)/tl.cell),0,TILE-1);
+  const p=j*TILE+i, cls=tl.A.d[p*4];
+  if(cls===255||cls>=NC){tip.style.display='none';return;}
+  const dlt=tl.C.d[p*4+2], gt=(dlt===0?cls:dlt-1);
+  const fb=tl.B.d[p*4], fh=tl.B.d[p*4+1];
+  const zmax=(fb===255)?(fh*0.25-1):(fb*0.01-1);
+  const fb2=tl.B.d[p*4+2], fh2=tl.C.d[p*4];
+  const zmin=(fb2===255)?(fh2*0.25-1):(fb2*0.01-1);
+  const cntv=Math.round(Math.expm1(tl.A.d[p*4+2]/51));
+  tip.innerHTML =
+    `<b style="color:${CL[cls].color}">${CL[cls].name}</b>`+
+    (gt<NC?`  ${cls===gt?'<span style="color:#3ddc97">✓</span>':'<span style="color:#ff5c7a">✗ '+CL[gt].name+'</span>'}`:'')+
+    `\nring ${ti}   cell ${(tl.cell*100).toFixed(0)} cm   r ${r2.toFixed(1)} m`+
+    `\nz ${zmin.toFixed(2)} … ${zmax.toFixed(2)} m   Δ ${(zmax-zmin).toFixed(2)} m`+
+    `\nreturns ${cntv}   conf ${(tl.A.d[p*4+1]/255*100).toFixed(0)}%`+
+    `\nmotion ${(tl.C.d[p*4+1]/255*100).toFixed(0)}%`;
+  tip.style.display='block';
+  const tw=tip.offsetWidth, th=tip.offsetHeight;
+  tip.style.left=Math.min(mx+14, stage.clientWidth-tw-6)+'px';
+  tip.style.top =Math.min(my+14, stage.clientHeight-th-6)+'px';
+});
+stage.addEventListener('mouseleave',()=>{tip.style.display='none';});
+stage.addEventListener('wheel',e=>{
+  e.preventDefault();
+  const r=cv.getBoundingClientRect(), mx=e.clientX-r.left, my=e.clientY-r.top;
+  const before=screen2world(mx,my);
+  S.zoom=clamp(S.zoom*(e.deltaY<0?1.13:1/1.13),0.35,60);
+  const after=screen2world(mx,my);
+  S.camX+=before[0]-after[0]; S.camY+=before[1]-after[1];
+  syncFollow(); syncZoom(); draw();
+},{passive:false});
+function syncFollow(){
+  const d=Math.hypot(S.camX,S.camY);
+  const b=document.getElementById('bFollow');
+  S.follow=d<0.6; b.classList.toggle('on',S.follow);
+  if(S.follow){S.camX=0;S.camY=0;}
+}
+function syncZoom(){ document.getElementById('zoomO').textContent=S.zoom.toFixed(1)+'×'; }
+
+/* =======================================================================
+   controls
+   ======================================================================= */
+function mkSeg(el,items,get,set){
+  el.innerHTML='';
+  items.forEach(([k,label])=>{
+    const b=document.createElement('button'); b.textContent=label; b.dataset.k=k;
+    b.className=(get()===k)?'on':''; b.onclick=()=>{set(k);
+      [...el.children].forEach(c=>c.classList.toggle('on',c.dataset.k===get()));};
+    el.appendChild(b);
+  });
+}
+mkSeg(document.getElementById('modeSeg'),MODES,()=>S.mode,k=>{S.mode=k;draw();});
+document.getElementById('srcSeg').onclick=e=>{
+  const b=e.target.closest('button'); if(!b)return;
+  S.src=b.dataset.src; [...e.currentTarget.children].forEach(c=>c.classList.toggle('on',c===b)); draw();
+};
+document.getElementById('gridSeg').onclick=e=>{
+  const b=e.target.closest('button'); if(!b)return;
+  S.grid=b.dataset.grid; [...e.currentTarget.children].forEach(c=>c.classList.toggle('on',c===b));
+  S.dec.clear(); updateGridNote(); setFrame(S.frame,true);
+};
+const bind=(id,fn)=>{const el=document.getElementById(id);el.oninput=()=>fn(+el.value);return el;};
+bind('tilt',v=>{S.tilt=v;document.getElementById('tiltO').textContent=v+'°';draw();});
+bind('vs',v=>{S.vs=v/100;document.getElementById('vsO').textContent=S.vs.toFixed(1)+'×';draw();});
+bind('zoom',v=>{S.zoom=Math.pow(10,-0.7+v/1000*2.5);syncZoom();draw();});
+const tg=(id,key)=>{const b=document.getElementById(id);b.onclick=()=>{S[key]=!S[key];
+  b.classList.toggle('on',S[key]);draw();};};
+tg('bRings','rings'); tg('bWire','wire'); tg('bShade','shade');
+document.getElementById('bFollow').onclick=()=>{S.camX=0;S.camY=0;S.follow=true;
+  document.getElementById('bFollow').classList.add('on');draw();};
+// legend
+const legEl=document.getElementById('legend');
+CL.forEach((c,i)=>{
+  const d=document.createElement('div');
+  d.innerHTML=`<s style="background:${c.color}"></s>${c.name}<em>${c.group.slice(0,4)}</em>`;
+  d.onclick=()=>{ if(S.hidden.has(i))S.hidden.delete(i); else S.hidden.add(i);
+    d.classList.toggle('off',S.hidden.has(i)); draw(); };
+  legEl.appendChild(d);
+});
+// timeline
+const scrub=document.getElementById('scrub');
+scrub.max=DASH.frames.length-1;
+function syncScrub(){ scrub.value=S.frame; }
+scrub.oninput=()=>setFrame(+scrub.value);
+document.getElementById('play').onclick=()=>{ S.playing=!S.playing;
+  document.getElementById('play').textContent=S.playing?'❚❚':'▶'; tick(); };
+document.getElementById('prev').onclick=()=>setFrame(S.frame-1);
+document.getElementById('next').onclick=()=>setFrame(S.frame+1);
+document.getElementById('speed').onchange=e=>S.speed=+e.target.value;
+addEventListener('keydown',e=>{
+  if(e.code==='Space'){e.preventDefault();document.getElementById('play').click();}
+  if(e.code==='ArrowRight')setFrame(S.frame+1);
+  if(e.code==='ArrowLeft')setFrame(S.frame-1);
+});
+let lastT=0;
+function tick(){
+  if(!S.playing) return;
+  const now=performance.now();
+  const interval=Math.max(60,150*S.speed);
+  if(now-lastT>interval){ lastT=now; setFrame((S.frame+1)%DASH.frames.length); }
+  requestAnimationFrame(tick);
+}
+function updateHud(){
+  const f=DASH.frames[S.frame];
+  document.getElementById('finfo').textContent =
+    `t ${f.t.toFixed(2)}s · ${f.npts.toLocaleString()} pts · ${f.ms.total_ms.toFixed(1)} ms · ${(1000/f.ms.total_ms).toFixed(0)} fps`;
+}
+function updateGridNote(){
+  const a=DASH.rings.map(r=>`${(r.cell*100).toFixed(0)}cm≤${r.r_out}m`).join('  ');
+  document.getElementById('gridNote').innerHTML = S.grid==='adaptive'
+    ? `5 concentric rings: ${a}.<br>${DASH.tile}×${DASH.tile} lattice per ring = ${(5*DASH.tile*DASH.tile/1000).toFixed(0)}k cells allocated.`
+    : `One ${Math.round(DASH.extent/DASH.uniform_cell)}×${Math.round(DASH.extent/DASH.uniform_cell)} lattice at a fixed ${DASH.uniform_cell*100} cm — the resolution a uniform map must use to reach 100 m.`;
+}
+
+/* =======================================================================
+   metric charts  (hand-rolled SVG, no dependencies)
+   ======================================================================= */
+function svg(w,h,inner){return `<svg viewBox="0 0 ${w} ${h}" width="100%">${inner}</svg>`;}
+function barChart(el,rows,{max=1,fmt=v=>v.toFixed(3),color=v=>'#4cc2ff'}={}){
+  const W=300, rowH=17, H=rows.length*rowH+6, lab=88, bw=W-lab-46;
+  let s='';
+  rows.forEach((r,i)=>{
+    const y=i*rowH+2, w=Math.max(0.6,clamp(r.v/max,0,1)*bw);
+    s+=`<text x="0" y="${y+11}" fill="#8497b0" font-size="10.5" font-family="ui-monospace,Menlo">${r.k}</text>`;
+    s+=`<rect x="${lab}" y="${y+2}" width="${bw}" height="10" fill="#1b2634" rx="2"/>`;
+    s+=`<rect x="${lab}" y="${y+2}" width="${w}" height="10" fill="${r.c||color(r.v)}" rx="2"/>`;
+    s+=`<text x="${lab+bw+4}" y="${y+11}" fill="#dbe4f0" font-size="10" font-family="ui-monospace,Menlo">${fmt(r.v)}${r.tip?`<title>${r.tip}</title>`:''}</text>`;
+  });
+  el.innerHTML=svg(W,H,s);
+}
+function lineChart(el,series,{ymin=0,ymax=1,fmt=v=>v.toFixed(2)}={}){
+  const W=300,H=118,pl=30,pr=8,pt=8,pb=22;
+  const n=series[0].v.length, iw=W-pl-pr, ih=H-pt-pb;
+  const X=i=>pl+iw*i/(n-1), Y=v=>pt+ih*(1-(v-ymin)/(ymax-ymin));
+  let s=`<rect x="${pl}" y="${pt}" width="${iw}" height="${ih}" fill="#131b28" rx="3"/>`;
+  for(let g=0;g<=4;g++){const v=ymin+(ymax-ymin)*g/4, y=Y(v);
+    s+=`<line x1="${pl}" y1="${y}" x2="${pl+iw}" y2="${y}" stroke="#243044" stroke-width=".7"/>`
+     + `<text x="2" y="${y+3}" font-size="8.5" fill="#6b7f99" font-family="ui-monospace,Menlo">${v.toFixed(2)}</text>`;}
+  const cols=['#4cc2ff','#3ddc97','#ffb547'];
+  series.forEach((se,si)=>{
+    const pts=se.v.map((v,i)=>`${X(i)},${Y(v)}`).join(' ');
+    s+=`<polyline points="${pts}" fill="none" stroke="${cols[si]}" stroke-width="1.8"/>`;
+    se.v.forEach((v,i)=>{s+=`<circle cx="${X(i)}" cy="${Y(v)}" r="2.6" fill="${cols[si]}"/>`;});
+  });
+  series[0].labels.forEach((l,i)=>{s+=`<text x="${X(i)}" y="${H-7}" fill="#8497b0" font-size="9" text-anchor="middle" font-family="ui-monospace,Menlo">${l}</text>`;});
+  el.innerHTML=svg(W,H,s);
+}
+function heatmap(el,cm,names){
+  const n=names.length, cell=Math.floor(280/n), W=n*cell+30, H=n*cell+22;
+  let s='';
+  for(let i=0;i<n;i++)for(let j=0;j<n;j++){
+    const v=cm[i][j];
+    const t=Math.pow(clamp(v,0,1),0.55);
+    const c=ramp(RAMP_VIR,t);
+    s+=`<rect x="${30+j*cell}" y="${i*cell}" width="${cell-1}" height="${cell-1}" fill="rgb(${c[0]|0},${c[1]|0},${c[2]|0})"><title>${names[i]} → ${names[j]}: ${(v*100).toFixed(1)}%</title></rect>`;
+  }
+  for(let i=0;i<n;i++){
+    s+=`<text x="27" y="${i*cell+cell-2}" fill="#8497b0" font-size="7.5" text-anchor="end" font-family="ui-monospace,Menlo">${names[i].slice(0,8)}</text>`;
+    s+=`<text x="${30+i*cell+cell/2}" y="${H-8}" fill="#8497b0" font-size="7.5" text-anchor="middle" transform="rotate(-60 ${30+i*cell+cell/2} ${H-8})" font-family="ui-monospace,Menlo">${names[i].slice(0,8)}</text>`;
+  }
+  el.innerHTML=svg(W,H+26,s);
+}
+function buildCharts(){
+  // KPIs
+  const kp=[['Map mIoU',M.miou_mapped!=null?M.miou_mapped.toFixed(3):(M.miou!=null?M.miou.toFixed(3):'—')],
+            ['Accuracy',M.accuracy_mapped!=null?(M.accuracy_mapped*100).toFixed(1)+'%'
+              :(M.accuracy!=null?(M.accuracy*100).toFixed(1)+'%':'—')],
+            ['FPS',M.fps!=null?M.fps.toFixed(1):(DASH.fps||0).toFixed(1)],
+            ['Latency',(M.latency?M.latency.total_ms.mean:DASH.mean_ms).toFixed(0)+' ms'],
+            // e.g. "20× smaller" with the absolute MB pair in the tooltip
+            ['Memory',M.memory?(()=>{const a=M.memory.adaptive_bytes||0,
+                u=M.memory.uniform.find(x=>x.name==='uniform_5cm');
+                const r=u?u.ratio_vs_adaptive:0;
+                const mb=b=>(b/1048576).toFixed(b/1048576<10?1:0);
+                return `<span title="adaptive ${mb(a)} MB vs uniform-5cm ${mb(u.bytes)} MB">${r.toFixed(0)}× smaller</span>`;})():'—']];
+  document.getElementById('kpis').innerHTML =
+    kp.map(([k,v])=>`<div class="kpi"><b>${v}</b><i>${k}</i></div>`).join('');
+
+  if(M.per_class_iou_mapped||M.per_class_iou){
+    const mp=M.per_class_iou_mapped||M.per_class_iou;
+    const rw=M.per_class_iou||mp;
+    const rows=mp.map((v,i)=>({
+      k:CL[i]?CL[i].name.slice(0,9):i, v, c:CL[i]?CL[i].color:'#888',
+      tip:`raw network ${rw[i].toFixed(3)}`}));
+    rows.sort((a,b)=>b.v-a.v);
+    barChart(document.getElementById('iouChart'),rows,{max:1});
+    const mm=M.miou_mapped||M.miou, mr=M.miou||mm;
+    document.getElementById('miouV').innerHTML=
+      `map ${mm.toFixed(3)} <span style="color:#6b7f99">/ raw ${mr.toFixed(3)}</span>`;
+  }
+  if(M.per_range){
+    const pr=M.per_range.filter(r=>r.miou!=null);
+    lineChart(document.getElementById('rangeChart'),
+      [{v:pr.map(r=>r.miou_mapped!=null?r.miou_mapped:r.miou),labels:pr.map(r=>r.rng)},
+       {v:pr.map(r=>r.acc_mapped!=null?r.acc_mapped:r.acc),labels:pr.map(r=>r.rng)}],
+      {ymin:0.3,ymax:1.0});
+    document.getElementById('rangeNote').innerHTML=
+      '<span style="color:#4cc2ff">— mIoU</span> <span style="color:#3ddc97">— accuracy</span>'
+      +'<br>cells: '+pr.map(r=>r.rng+' → '+(r.cell*100).toFixed(0)+'cm').join(', ');
+  }
+  if(M.ablation){
+    const ab=M.ablation;
+    const rows=ab.map(a=>({k:a.mode==='adaptive'?'ADAPTIVE':(a.cell*100).toFixed(0)+' cm',
+      v:a.miou, c:a.mode==='adaptive'?'#3ddc97':'#4cc2ff'}));
+    barChart(document.getElementById('ablChart'),rows,{max:1});
+    const u5=ab.find(a=>a.cell===0.05), u50=ab.find(a=>a.cell===0.5), ad=ab.find(a=>a.mode==='adaptive');
+    document.getElementById('ablNote').innerHTML=
+      `Same network, same points — only the <b>map resolution</b> changes. `
+      +`Adaptive mIoU <b style="color:#3ddc97">${ad.miou.toFixed(3)}</b> vs uniform-50 cm `
+      +`<b style="color:#ff5c7a">${u50.miou.toFixed(3)}</b>; curb IoU ${ad.curb_iou.toFixed(3)} vs ${u50.curb_iou.toFixed(3)}. `
+      +(u5?`Uniform-5 cm reaches ${u5.miou.toFixed(3)} but needs ${(u5.allocated/1e6).toFixed(0)}M cells.`:'');
+  }
+  if(M.latency){
+    const L=M.latency, parts=[['raster',L.raster_ms.mean],['network',L.net_ms.mean],
+      ['sample',L.sample_ms.mean],['grid+refine',L.project_ms.mean]];
+    const rows=parts.map(([k,v])=>({k,v,c:'#7c5cff'}));
+    barChart(document.getElementById('latChart'),rows,{max:Math.max(...parts.map(p=>p[1]))*1.15,
+      fmt:v=>v.toFixed(1)+'ms'});
+    document.getElementById('fpsV').textContent=(1000/L.total_ms.mean).toFixed(1)+' fps';
+    document.getElementById('pipeBox').innerHTML=
+      `64-beam sweep → <b>${(DASH.frames[0]?DASH.frames[0].npts/1000:0).toFixed(0)}k</b> returns<br>`
+      +`foveated BEV pyramid ${DASH.pyramid.map(p=>p.px+'²').join(' + ')} = `
+      +`${(DASH.pyramid.reduce((a,p)=>a+p.px*p.px,0)/1000).toFixed(0)}k cells<br>`
+      +`FoveaNet ${(M.params/1000).toFixed(0)}k params, shared across all levels<br>`
+      +`→ 2.5D ring lattice ${RINGS.map(r=>(r.cell*100).toFixed(0)).join('/')} cm<br>`
+      +`A uniform 5 cm raster would need ${(M.memory?M.memory.uniform.find(u=>u.name==='uniform_5cm').allocated/1e6:16).toFixed(0)}M px `
+      +`(≈ ${M.projected_uniform5cm_fps?M.projected_uniform5cm_fps.toFixed(3):'—'} fps projected).`;
+  }
+  if(M.memory){
+    const mm=M.memory;
+    const rows=[{k:'adaptive',v:mm.adaptive_bytes,c:'#3ddc97'}]
+      .concat(mm.uniform.map(u=>({k:u.name.replace('uniform_',''),v:u.bytes,c:'#4cc2ff'})))
+      .concat([{k:'3D voxel 5cm',v:mm.voxel3d.bytes,c:'#ff5c7a'}]);
+    const mx=Math.max(...rows.map(r=>r.v));
+    const W=300,rowH=17,H=rows.length*rowH+6,lab=88,bw=W-lab-70;
+    let s='';
+    rows.forEach((r,i)=>{
+      const y=i*rowH+2, w=Math.max(0.8,Math.log10(r.v)/Math.log10(mx)*bw);
+      s+=`<text x="0" y="${y+11}" fill="#8497b0" font-size="10" font-family="ui-monospace,Menlo">${r.k}</text>`;
+      s+=`<rect x="${lab}" y="${y+2}" width="${bw}" height="10" fill="#1b2634" rx="2"/>`;
+      s+=`<rect x="${lab}" y="${y+2}" width="${w}" height="10" fill="${r.c}" rx="2"/>`;
+      s+=`<text x="${lab+bw+4}" y="${y+11}" fill="#dbe4f0" font-size="9.5" font-family="ui-monospace,Menlo">${fmtB(r.v)}</text>`;
+    });
+    document.getElementById('memChart').innerHTML=svg(W,H,s);
+    const u5=mm.uniform.find(u=>u.name==='uniform_5cm');
+    document.getElementById('memNote').innerHTML=
+      `Allocated cells @8 B/cell. Adaptive reserves <b>${(mm.adaptive_allocated/1000).toFixed(0)}k</b> `
+      +`(${mm.adaptive_occupied_mean.toFixed(0)}k occupied) vs <b>${(u5.allocated/1e6).toFixed(0)}M</b> for a `
+      +`uniform 5 cm map: <b style="color:#3ddc97">${u5.ratio_vs_adaptive.toFixed(0)}× less memory</b>, `
+      +`and ${fmtB(mm.voxel3d.bytes)} if stored as a 3D voxel grid.`;
+  }
+  if(M.confusion) heatmap(document.getElementById('cmChart'),M.confusion,CL.map(c=>c.name));
+  if(M.task){
+    const t=M.task, gi=M.group_iou_mapped||M.group_iou;
+    const row=(k,v)=>`<div style="display:flex;justify-content:space-between;gap:8px">
+      <span style="color:#8497b0">${k}</span><span>${v}</span></div>`;
+    const tm2=M.task_mapped||t;
+    document.getElementById('taskBox').innerHTML=
+      row('drivable IoU',tm2.drivable_iou!=null?tm2.drivable_iou.toFixed(3):'—')
+     +row('drivable accuracy',t.drivable_acc!=null?(t.drivable_acc*100).toFixed(1)+'%':'—')
+     +row('false-drivable rate',tm2.false_drivable_rate!=null?(tm2.false_drivable_rate*100).toFixed(2)+'%':'—')
+     +row('object recall',tm2.object_recall!=null?(tm2.object_recall*100).toFixed(1)+'%':'—')
+     +row('terrain group IoU',gi?gi.terrain.toFixed(3):'—')
+     +row('static group IoU',gi?gi.static.toFixed(3):'—')
+     +row('dynamic group IoU',gi?gi.dynamic.toFixed(3):'—')
+     +row('dynamic recall',tm2.dynamic_recall!=null?(tm2.dynamic_recall*100).toFixed(1)+'%':'—')
+     +`<div class="note" style="margin-top:5px">Evaluated on the mapped 2.5D grid
+        (${M.n_frames} sweeps, r&lt;100 m). Rows are the three tasks from the brief:
+        terrain drivability, static obstacles, dynamic agents.</div>`;
+  }
+}
+
+/* =======================================================================
+   boot
+   ======================================================================= */
+new ResizeObserver(resize).observe(stage);
+buildCharts(); updateGridNote(); syncZoom();
+setFrame(0,true).then(()=>{document.getElementById('load').style.display='none';});
+</script>
+</body>
+</html>
